@@ -1,0 +1,516 @@
+---
+title: "Assignment 1"
+author: 'Enric Reverter & Gerard Pons'
+date: "14/10/2021"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, eval=F}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=F}
+## Data manipulation
+require(tidyverse)
+require(dplyr)
+require(mice)
+require(Hmisc)
+
+## Statistics
+library(lsr)
+library(missMDA)
+library(VIM)
+library(chemometrics)
+library(arules)
+require(skimr)
+library(lmtest)
+require(car)
+require(MASS)
+
+
+## Plots
+require(ggplot2)
+require(ggExtra)
+require(ggthemes)
+require(processx)
+require(plotly)
+
+require(cowplot)
+require(gridExtra)
+
+require(RColorBrewer)
+library(viridis)
+
+theme_set(theme_bw())
+
+## Set data path
+setwd("..")
+data_path = file.path(getwd(), "data")
+plot_path = file.path(getwd(), "plots")
+```
+
+## Get the data
+
+```{r, eval=T}
+# Read datasets
+df = read.csv(file.path(data_path, "cars.csv"))
+```
+
+### Question 1
+
+**Q: Determine if the response variable (price) has an acceptably normal distribution. Address test to discard serial correlation.**
+
+```{r}
+p1 = ggplot(data = df, aes(x=price)) +
+  geom_histogram(aes(y=..density..), color = 1, fill = "white", bins = 50, ) +
+  geom_density(color = "red", lwd = 1) +
+  labs(title = "Histogram & Density for Price")
+
+p2 = ggplot(data = df, aes(sample=price)) +
+  geom_qq(shape = 1, color = "royalblue") + geom_qq_line() +
+  labs(title = "QQ Plot for Price")
+
+plot_grid(plotlist = list(p1,p2), align = "h", ncol = 2)
+```
+
+```{r}
+shapiro.test(df$price)
+```
+
+```{r}
+acf(df$price)
+dwtest(price ~ 1, data = df)
+```
+
+
+### Question 2
+
+**Q: Indicate by exploration of the data which are apparently the variables most associated with the response variable (use only the indicated variables).**
+
+```{r}
+library(corrplot)
+correlation = cor(df[, sapply(df, is.numeric)],method="spearman")
+corrplot(correlation, order="AOE", method="color", addCoef.col = "gray10", tl.col = "black", tl.cex = .8, number.digits = 2, number.cex = 0.7, title = "Spearman Correlation Plot", mar=c(0,0,1.5,0))
+
+cor.test(df$price, df$tax,method="spearman")
+cor.test(df$price, df$mpg,method="spearman")
+cor.test(df$price, df$age,method="spearman")
+cor.test(df$price, df$mileage,method="spearman")
+```
+
+```{r}
+kruskal.test(df$price,df$manufacturer)
+kruskal.test(df$price, df$transmission)
+kruskal.test(df$price, df$fuelType)
+kruskal.test(df$price, df$engineSize_int)
+```
+
+### Question 3
+
+**Q: Define a polytomic factor f.age for the covariate car age according to its quartiles and argue if the average price depends on the level of age. Statistically justify the answer.**
+
+```{r}
+df$f.age = discretize(df$age,method = "frequency",breaks=4)
+table(df$f.age)
+round(prop.table(table(df$f.age))*100)
+
+tapply(df$price, df$f.age, mean)
+Boxplot(df$price~df$f.age)
+
+is_outlier = function(x) {
+  return(x < quantile(x, 0.25) - 3 * IQR(x) | x > quantile(x, 0.75) + 3 * IQR(x))
+}
+
+df %>%
+  group_by(f.age) %>%
+  tibble::rownames_to_column(var = "id") %>%
+  mutate(outlier = ifelse(is_outlier(price), id, NA)) %>%
+  ggplot(., aes(x = f.age, y = price, fill = f.age)) +
+    geom_boxplot(alpha = 0.6, outlier.alpha = NULL) +
+    scale_fill_brewer(palette = "Blues") +
+    geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+    labs(title = "Boxplots of price by f.age",
+         caption = "Only severe outliers are labeled") +
+    theme(legend.position = "none")
+```
+
+```{r}
+kruskal.test(df$price~df$f.age)
+
+pairwise.wilcox.test(df$price,df$f.age,alternative='less')
+```
+
+### Question 4
+
+**Q: Calculate and interpret the anova model that explains car price according to the age factor and the fuel type.**
+
+```{r}
+options(contrasts=c('contr.treatment','contr.treatment'))
+
+m0 = lm(df$price~1)
+m1 = lm(df$price~df$f.age)
+m2 = lm(df$price~df$fuelType)
+m3 = lm(df$price~df$f.age+df$fuelType)
+m4 = lm(df$price~df$f.age*df$fuelType)
+
+anova(m0,m3) #General effect of the proposed model
+anova(m3) 
+summary(m3)
+```
+
+### Question 5
+
+**Q: Do you think that the variability of the price depends on both factors? Does the relation between price and age factor depend on fuel type?**
+
+```{r}
+anova(m0,m1) #Gross effect factor age
+anova(m0,m2) #Gross effect fuelType
+
+anova(m3,m2) #Net fuelType effect
+anova(m3,m1) #Net factor age effect
+
+anova(m3,m4) #Check interactions
+```
+
+```{r}
+par(mfrow=c(1,1))
+interaction.plot(df$f.age,df$fuelType,df$price)
+```
+
+### Question 6 & 7
+
+**Q: Calculate the linear regression model that explains the price from the age: interpret the regression line and assess its quality. What is the percentage of the price variability that is explained by the age of the car?**
+
+```{r}
+m2 = lm(df$price~df$age)
+```
+
+```{r}
+ggplot(df, aes(x = age, y = price)) +
+  geom_point(alpha = 0.8) +
+  stat_smooth(method = "lm", col = "royalblue") +
+  labs(title = "Linear Model: price ~ age")
+```
+
+```{r}
+summary(m2)
+par(mfrow=c(2,2))
+plot(m2)
+par(mfrow=c(1,1))
+
+boxcox(df$price ~ df$age)
+```
+
+### Question 8
+
+**Q: Do you think it is necessary to introduce a quadratic term in the equation that relates the price to its age?**
+
+```{r}
+m22 = lm(df$price~df$age+I(df$age^2))
+summary(m22)
+anova(m2,m22)
+
+par(mfrow=c(2,2))
+plot(m22)
+par(mfrow=c(1,1))
+```
+
+```{r}
+boxTidwell(df$price~I(df$age+0.1))
+```
+
+### Question 9
+
+**Q: Are there any additional explanatory numeric variables needed to the car price? Study collinearity effects.**
+
+```{r}
+m3 = lm(df$price~df$age+df$mileage+df$tax+df$mpg)
+summary(m3)
+Anova(m3)
+vif(m3)
+```
+
+```{r}
+m3 = lm(df$price~df$age+df$mpg)
+summary(m3)
+vif(m3)
+boxTidwell(df$price~I(df$age+0.1)+df$mpg)
+```
+
+```{r}
+m33 = lm(df$price~ df$age + I(df$mpg^-2))
+summary(m33)
+vif(m33)
+```
+
+```{r}
+BIC(m3, m33)
+```
+
+```{r}
+# scatter3d(df$price ~ df$age + I(df$mpg^-2), groups = as.factor(df$fuelType), grid = F)
+```
+
+### Question 10
+
+**Q: After controlling by numerical variables, indicate whether the additive effect of the available factors on the price are statistically significant.**
+
+```{r}
+m12= lm(df$price~df$age+I(df$mpg^-2)+df$manufacturer+df$engineSize_int+df$transmission+df$fuelType)
+full_model = step(m12,k=log(nrow(df)))
+summary(full_model)
+anova(m3,full_model)
+```
+
+```{r}
+avPlots(m12)
+```
+
+  ### Question 11
+
+**Q: Select the best model available so far. Interpret the equations that relate the explanatory variables to the answer (rate).**
+
+```{r}
+summary(full_model)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(full_model)
+par(mfrow=c(1,1))
+```
+
+### Question 12
+
+**Q: Study the model that relates the logarithm of the price to the numerical variables.**
+
+```{r}
+mlog = lm(log(df$price)~df$age+df$mileage+df$tax+df$mpg)
+summary(mlog)
+Anova(mlog)
+vif(mlog)
+```
+
+```{r}
+mlog = lm(log(df$price)~df$age+df$tax+df$mpg)
+summary(mlog)
+```
+
+```{r}
+boxTidwell(log(df$price)~I(df$age+0.1)+I(df$tax+0.1)+df$mpg)
+
+mlog1 = lm(log(df$price)~df$age+df$tax+I(df$mpg^-2))
+
+anova(mlog,mlog1)
+BIC(mlog, mlog1)
+
+boxTidwell(log(df$price)~I(df$age+0.1)+I(df$tax+0.1)+I(df$mpg^-2))
+
+mlog2 = lm(log(df$price)~I(df$age^2)+df$tax+I(df$mpg^-2))
+
+anova(mlog1,mlog2)
+BIC(mlog1, mlog2)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(mlog1)
+par(mfrow=c(1,1))
+```
+
+
+### Question 13
+
+**Q: Once explanatory numerical variables are included in the model, are there any main effects from factors needed?**
+
+```{r}
+mlog = lm(log(df$price)~df$age+df$tax+I(df$mpg^-2)+df$engineSize_int+df$manufacturer+df$transmission+df$fuelType)
+logmodel = step(mlog, k = log(nrow(df)))
+summary(logmodel)
+vif(logmodel)
+```
+
+### Question 14
+
+**Q: Graphically assess the best model obtained so far.**
+
+```{r}
+par(mfrow=c(2,2))
+plot(logmodel) 
+par(mfrow=c(1,1))
+```
+
+```{r}
+avPlots(logmodel)
+marginalModelPlots(logmodel, terms = ~df$age+df$tax+I(df$mpg^-2))
+```
+
+### Question 15
+
+**Q: Assess the presence of outliers in the studentized residuals at a 99% confidence level. Indicate what those observations are.**
+
+```{r}
+# mb is best model
+mb = logmodel
+n = dim(df)[1]
+p = mb$rank
+res_mb = rstudent(mb)
+cut_off = qt(0.995,n-p-1)
+
+Boxplot(res_mb)
+abline(h=cut_off,col=2)
+abline(h=-cut_off,col=2)
+
+nrow(df[which(abs(res_mb)>cut_off),])
+
+aux = df[which(abs(res_mb)>cut_off),]
+summary(aux)
+
+table(aux$model)
+prop.table(table(aux$transmission)); prop.table(table(df$transmission))
+prop.table(table(aux$fuelType)); prop.table(table(df$fuelType))
+prop.table(table(aux$engineSize_int)); prop.table(table(df$engineSize_int))
+prop.table(table(aux$manufacturer)); prop.table(table(df$manufacturer))
+mean(aux$price); mean(df$price)
+mean(aux$age); mean(df$age)
+mean(aux$tax); mean(df$tax)
+mean(aux$mpg); mean(df$mpg)
+```
+
+### Question 16
+
+**Q: Study the presence of a priori influential data observations, indicating their number according to the criteria studied in class.**
+
+```{r}
+hat = hatvalues(mb)
+hat_cut = 3*p/n #if we assume the dataset is small, then 2p/n
+
+Boxplot(hat)
+abline(h=hat_cut,col=2)
+
+sum(hat>hat_cut)
+
+aux = df[which(hat>hat_cut),]
+
+table(aux$model)
+prop.table(table(aux$transmission)); prop.table(table(df$transmission))
+prop.table(table(aux$fuelType)); prop.table(table(df$fuelType))
+prop.table(table(aux$engineSize_int)); prop.table(table(df$engineSize_int))
+prop.table(table(aux$manufacturer)); prop.table(table(df$manufacturer))
+mean(aux$price); mean(df$price)
+mean(aux$age); mean(df$age)
+mean(aux$tax); mean(df$tax)
+mean(aux$mpg); mean(df$mpg)
+```
+
+### Question 17
+
+**Q: Study the presence of a posteriori influential values, indicating the criteria studied in class and the actual atypical observations.**
+
+```{r}
+cook = cooks.distance(mb)
+cook_cut = 4/(n-p)
+
+Boxplot(cook)
+abline(h=cook_cut)
+
+nrow(df[which(cook>cook_cut),])
+
+aux = df[which(cook>cook_cut),]
+
+table(aux$model)
+prop.table(table(aux$transmission)); prop.table(table(df$transmission))
+prop.table(table(aux$fuelType)); prop.table(table(df$fuelType))
+prop.table(table(aux$engineSize_int)); prop.table(table(df$engineSize_int))
+prop.table(table(aux$manufacturer)); prop.table(table(df$manufacturer))
+mean(aux$price); mean(df$price)
+mean(aux$age); mean(df$age)
+mean(aux$tax); mean(df$tax)
+mean(aux$mpg); mean(df$mpg)
+```
+
+```{r}
+df[which(cook>0.5),]
+```
+
+```{r}
+influencePlot(mb)
+```
+
+### Question 18
+
+**Q: Given a 5-year old car, the rest of numerical variables on the mean and factors on the reference level, what would be the expected price with a 95% confidence interval?**
+
+```{r}
+mpred = lm(log(price)~age+mpg+engineSize_int+manufacturer+transmission+fuelType,data=df)
+pred_df<-data.frame(age=5,tax=mean(df$tax),mpg=mean(df$mpg),engineSize_int='[0.0,1.5)',manufacturer='Audi',
+                    transmission='Automatic',fuelType='Diesel')
+exp(predict(mpred,pred_df,conf=0.95,interval=c("pred"),se.fit=T)$fit)
+```
+
+### Question 19
+
+**Q: Summarize what you have learned by working with this interesting real dataset.**
+
+### Plots
+
+```{r}
+ggplot(data = df, aes(x="", y=price)) +
+  geom_boxplot(width=0.5) +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Wrap of Price by Manufacturer",
+       y="Price [€]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank()) +
+  facet_wrap(vars(manufacturer))
+
+ggplot(data = df, aes(x="", y=age)) +
+  geom_boxplot(width=0.5) +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Wrap of Age by Manufacturer",
+       y="Age [Years]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank()) +
+  facet_wrap(vars(manufacturer))
+
+ggplot(data = df, aes(x="", y=price)) +
+  geom_boxplot(width=0.5) +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Wrap of Price by Engine Size",
+       y="Price [€]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank()) +
+  facet_wrap(vars(engineSize_int))
+
+ggplot(data = df, aes(x="", y=price)) +
+  geom_boxplot(width=0.5) +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Wrap of Price by Fuel Type",
+       y="Price [€]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank()) +
+  facet_wrap(vars(fuelType))
+
+ggplot(data = df, aes(x="", y=price)) +
+  geom_boxplot(width=0.5) +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Wrap of Price by Transmission",
+       y="Price [€]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank()) +
+  facet_wrap(vars(transmission))
+```
+
+```{r}
+# pairwise.wilcox.test(df$age, df$manufacturer, alternative = "less")
+# pairwise.wilcox.test(df$mileage, df$manufacturer, alternative = "less")
+# pairwise.wilcox.test(df$mileage, df$manufacturer, alternative = "less")
+# table(df$manufacturer, df$transmission)
+# table(df$manufacturer, df$engineSize_int)
+# table(df$manufacturer, df$fuelType)
+```
+

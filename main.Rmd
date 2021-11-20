@@ -1,0 +1,750 @@
+---
+title: "Assignment 1"
+author: 'Enric Reverter & Gerard Pons'
+date: "14/10/2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, eval=F}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Required libraries
+
+```{r}
+## Data manipulation
+require(tidyverse)
+require(dplyr)
+require(mice)
+require(Hmisc)
+
+## Statistics
+library(lsr)
+library(missMDA)
+library(VIM)
+library(chemometrics)
+library(arules)
+require(skimr)
+
+## Plots
+require(ggplot2)
+require(ggExtra)
+require(ggthemes)
+require(processx)
+require(plotly)
+
+require(cowplot)
+require(gridExtra)
+
+require(RColorBrewer)
+
+theme_set(theme_bw())
+
+## Set data path
+setwd("..")
+data_path = file.path(getwd(), "data")
+plot_path = file.path(getwd(), "plots")
+```
+
+
+# Data Profiling
+
+## Get the data
+
+```{r, eval=T}
+# Read datasets
+audi = read.csv(file.path(data_path, "audi.csv"))
+bmw = read.csv(file.path(data_path, "bmw.csv"))
+merc = read.csv(file.path(data_path, "merc.csv"))
+vw = read.csv(file.path(data_path, "vw.csv"))
+```
+
+```{r, include=F, eval=F}
+# Read datasets (Gerard)
+audi <- read.table("audi.csv",header=T, sep=",")
+bmw <- read.table("bmw.csv",header=T, sep=",")
+merc <- read.table("merc.csv",header=T, sep=",")
+vw <- read.table("vw.csv",header=T, sep=",")
+```
+
+```{r}
+# Create manufacturer column
+audi$manufacturer <- "Audi"
+bmw$manufacturer <- "BMW"
+merc$manufacturer <- "Mercedes"
+vw$manufacturer <- "VW"
+
+# Join Tables
+df <- rbind(audi,bmw,merc,vw)
+df = df[!duplicated(df),] # Remove duplicates
+set.seed("42")
+samples<-as.vector(sort(sample(1:nrow(df),5000)))
+df<-df[samples,]
+```
+
+## Format each feature with the correct type
+
+```{r}
+# Char features are transformed to factors
+df$model = sub('.','',df$model) # Remove unwanted spaces in the levels
+df$manufacturer = as.factor(df$manufacturer)
+df$model = as.factor(df$model)
+df$fuelType = as.factor(df$fuelType)
+df$transmission = as.factor(df$transmission)
+df$engineSize = factor(df$engineSize, ordered = T)
+
+# Compute age using the year. Drop year.
+df$age = max(df$year)-df$year
+df = df %>% select(., -c("year"))
+```
+
+## Impute the electric vehicles
+
+Those vehicles with engineSize = 0 need special attention:
+```{r}
+# Display electric vehicles
+df[df$engineSize == 0,]
+
+#We need to manually impute that data according to Internet information:
+# Audi Q3 Diesel-> 2.0
+# Audi Q3 Petrol -> 2.0
+# Audi A3 Diesel -> 2.0
+# Audi A3 Petrol -> 2.0
+# BMW X5 Petrol -> 3.0
+# BMW Series 1 -> 1.6
+# Mercedes SL CLASS -> 3.0
+
+df[df$engineSize == 0 & df$manufacturer == 'Audi',]$engineSize = 2.0
+df[df$engineSize == 0 & df$manufacturer == 'Mercedes',]$engineSize = 3.0
+df[df$engineSize == 0 & df$model == '1 Series',]$engineSize = 1.6
+df[df$engineSize == 0 & df$model == 'X5',]$engineSize = 3.0
+```
+
+## Missing Values
+
+We can see there are no missing values across the dataset:
+```{r}
+# Number of Na's
+sum(is.na(df)) # Total
+colSums(is.na(df)) # Per columns
+```
+Write merged dataset:
+```{r, include=T}
+# Enric
+# write.csv(df, file.path(data_path, "cars.csv"), row.names = FALSE)
+```
+
+```{r, include=F}
+# Gerard
+# write.csv(df, "cars.csv", row.names = FALSE)
+```
+
+# Exploratory analysis of each variable
+
+## General
+
+Q: Do all the models have the same fuel type and transmission? Also, the engine size, mpg and tax are expected to be different across same models.
+
+In order to answer this question we will focus on the most frequent model, the VW Golf.
+```{r}
+df %>% 
+  filter(., manufacturer == "VW" & model == "Golf") %>%
+  summary()
+```
+
+A: We can see that one model can have different values for transmission, fuel type, tax, mpg and engine size. This is going to be important in the outlier selection.
+
+Q: Do the mileage, age, and price seem to be highly correlated at first sight?
+```{r}
+p = ggplot(data = df, aes(x=age, y=mileage, col=price, size=price)) +
+  geom_point() +
+  scale_color_gradient2(midpoint = quantile(df$price)[[2]], low="#DEEBF7", mid="#9ECAE1", high="#3182BD") +
+  geom_smooth(method="lm", formula=y~x) +
+  guides(size = FALSE) +
+  theme(legend.position=c(.9, .3))
+
+ggMarginal(p, type="histogram")
+```
+
+A: As expected, they seem to be highly correlated, but this is going to be analyzed in detail in another section.
+
+## Univariate outlier detection
+
+Outliers: https://www.rips-irsp.com/articles/10.5334/irsp.289/
+
+### Response Variable - Price
+
+```{r}
+summary(df$price)
+extreme_out = quantile(df$price)[[4]]+3*IQR(df$price)
+```
+
+```{r}
+p = ggplot(data = df, aes(x="", y=price)) +
+  geom_boxplot(width=0.5) +
+  geom_hline(yintercept=extreme_out, color="red") +
+    geom_text(aes(x="", y=extreme_out, label="Extreme Outliers", hjust=2, vjust=-0.5), color="red") +
+  scale_y_continuous(labels=scales::comma) +
+  labs(title="Boxplot of Price",
+       y="Price [€]") +
+  # Do not show x axis
+  theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank())
+
+ggsave(file=file.path(plot_path,"boxplot_price.png"), plot=p)
+p
+```
+
+```{r}
+# Count number of outliers
+num_outliers = df %>%
+  filter(., price > extreme_out) %>%
+  nrow()
+
+print(paste("There are", num_outliers, "outliers. Are all of them errors that should be removed?"))
+```
+
+```{r}
+# Are all the outliers errors?
+non_out = df %>%
+  filter(., price <= extreme_out)
+
+out_out = df %>%
+  filter(., price > extreme_out & !model %in% non_out ) %>%
+  count(manufacturer, model, sort=T)
+
+out_in = df %>%
+  filter(., price > extreme_out & model %in% non_out ) %>%
+  count(manufacturer, model, sort=T)
+
+out_in
+out_out
+```
+
+None of the models labeled as extreme outliers can be found in the non-outliers group. Also, their frequency is really low compared to other models. Thus, they are either going to be removed or stored apart in order to study them in a different analysis. Either way, they are not going to be included in our main analysis since they deviate too much from the sample.
+
+```{r}
+dim(df)
+df = df[df$price<=extreme_out, ]
+dim(df)
+```
+
+### Explanatory Variables - Numerical
+
+```{r}
+num_vars = df %>%
+  select(., where(is.numeric) & !c("price","engineSize")) %>%
+  colnames()
+
+plist = list()
+
+for (i in 1:(length(num_vars))) {
+  
+  extreme_out_up = quantile(df[, num_vars[i]])[[4]]+3*IQR(df[, num_vars[i]])
+  extreme_out_down = quantile(df[, num_vars[i]])[[2]]-3*IQR(df[, num_vars[i]])
+  
+  plist[[i]] = ggplot(df, aes_string(x="''", y=num_vars[i])) + 
+    geom_boxplot(width=0.5) +
+    geom_hline(yintercept = extreme_out_up, color="red") +
+    geom_hline(yintercept = extreme_out_down, color="red") +
+    scale_y_continuous(labels = scales::comma) +
+    coord_cartesian(ylim=c(0,NA)) +
+    theme(legend.position="none") +
+    theme(axis.text.x=element_blank(), axis.ticks.x = element_blank(), axis.line.x = element_blank(), axis.title.x=element_blank())
+  
+}
+
+title = ggdraw() + draw_label("Boxplots - Numerical Variables", fontface='bold')
+empty = ggdraw()
+p = plot_grid(title, empty, plotlist = plist, align = "v", ncol = 2, rel_heights = c(0.2,1,1))
+
+ggsave(file=file.path(plot_path,"boxplot_nums.png"), plot=p)
+p
+```
+
+Here we can see that only tax has outliers in both directions. Also, there seems to be a data point in each boxplot that is really far from the others. We will create a new variable to store how many univariate variable have each of the individuals:
+```{r}
+df$outliers = 0
+```
+
+#### MILEAGE
+
+```{r}
+summary(df$mileage)
+
+extreme_out_mileage = quantile(df$mileage)[[4]]+3*IQR(df$mileage)
+
+# Count numbert of outliers for mileage
+num_outliers = df %>%
+  filter(., mileage > extreme_out_mileage) %>%
+  nrow()
+
+paste("Number of outliers:", num_outliers)
+```
+Explore the outliers:
+```{r}
+df %>%
+  filter(., mileage > extreme_out_mileage) %>%
+  arrange(desc(mileage))
+
+out_mileage = df[df$mileage > extreme_out_mileage,]
+out_mileage[order(-out_mileage$mileage),]
+```
+
+Add univariate outliers count:
+```{r}
+df[df$mileage > extreme_out_mileage, ]$outliers = df[df$mileage > extreme_out_mileage, ]$outliers  + 1
+```
+
+#### TAX
+
+Recall that it had extreme outliers on the lower tail. Let's take a look:
+```{r}
+p = ggplot(data = df, aes(x=tax)) +
+  geom_histogram(aes(y=..density..), color = 1, fill = "white", bins = 50) +
+  geom_density(color = "deepskyblue4", lwd = 0.5) +
+  labs(title = "Histogram & Density Plots for Tax")
+
+ggsave(file=file.path(plot_path,"tax_density.png"), plot=p)
+p
+```
+
+There appears to be something weird going on with tax. ALthough most of its values are around 100, a good number of them are grouped between 0 and 50. Thus, we will not delete not impute this ones. There are way too many.
+
+```{r}
+d <- density(df$tax)
+plot(d)
+```
+
+
+```{r}
+summary(df$tax)
+extreme_out_tax = quantile(df$tax)[[4]]+3*IQR(df$tax)
+# extreme_out_tax_und = quantile(df$tax)[[2]]-3*IQR(df$tax) #It has outliers in both directions
+
+# Count numbert of outliers for mileage
+num_outliers = df %>%
+  filter(., tax > extreme_out_tax) %>%
+  nrow()
+
+paste("Number of outliers:", num_outliers)
+```
+
+Explore the outliers:
+```{r}
+df %>%
+  filter(., tax > extreme_out_tax) %>%
+  arrange(desc(tax)) %>%
+  print()
+
+out_tax = df[df$tax > extreme_out_tax,]
+out_tax[order(-out_tax$tax),]
+```
+
+Add univariate outliers count:
+```{r}
+df[df$tax > extreme_out_tax, ]$outliers = df[df$tax > extreme_out_tax, ]$outliers + 1
+# df[df$tax < extreme_out_tax_und, ]$outliers = df[df$tax < extreme_out_tax_und, ]$outliers + 1
+```
+
+#### MPG
+
+```{r}
+summary(df$mpg)
+extreme_out_mpg = quantile(df$mpg)[[4]]+3*IQR(df$mpg)
+
+# Count numbert of outliers for mileage
+num_outliers = df %>%
+  filter(., mpg > extreme_out_mpg) %>%
+  nrow()
+
+paste("Number of outliers:", num_outliers)
+```
+
+Explore the outliers:
+```{r}
+df %>%
+  filter(., mpg > extreme_out_mpg) %>%
+  arrange(desc(mpg)) %>%
+  print()
+
+out_mpg = df[df$mpg > extreme_out_mpg,]
+out_mpg[order(-out_mpg$mpg),]
+```
+
+Add univariate outliers count:
+```{r}
+df[df$mpg > extreme_out_mpg, ]$outliers = df[df$mpg > extreme_out_mpg, ]$outliers  + 1
+```
+
+#### AGE
+
+```{r}
+summary(df$age)
+extreme_out_age = quantile(df$age)[[4]]+3*IQR(df$age)
+
+# Count numbert of outliers for mileage
+num_outliers = df %>%
+  filter(., age > extreme_out_age) %>%
+  nrow()
+
+paste("Number of outliers:", num_outliers)
+```
+
+Explore the outliers:
+```{r}
+df %>%
+  filter(., age > extreme_out_age) %>%
+  arrange(desc(age)) %>%
+  print()
+
+out_age = df[df$age > extreme_out_age,]
+out_age[order(-out_age$age),]
+```
+
+Add univariate outliers count:
+```{r}
+df[df$age > extreme_out_age, ]$outliers = df[df$age > extreme_out_age, ]$outliers  + 1
+```
+
+If we take a look at the number of univariate outliers that individuals (cars) have, it can be seen that 16 of them have more than one. On one hand, the remaining 220 are converted to NA and imputed. On the other hand, the other 16 are not imputed yet, in order to check if they are detected on the multivariate outlier step.
+```{r}
+p = df %>%
+  select(., outliers) %>%
+  filter(., outliers >= 1) %>%
+  count(outliers) %>%
+  ggplot(., aes(x=outliers, y=n)) +
+    geom_bar(stat="identity", color = 1, fill = "white") +
+    geom_text(aes(label=n), vjust=-0.2) +
+  labs(title="Number of Outliers Across the Individuals",
+       caption="Only those observations with at least 1 univariate outlier are taken into account",
+       x="Number of Univariate Outliers", y="Count")
+
+ggsave(file=file.path(plot_path,"bar_outliers.png"), plot=p)
+p
+```
+We finally convert to NA all the univariate outliers of the inividuals with only one outlier across its features:
+```{r}
+df[df$mileage>extreme_out_mileage & df$outliers == 1,]$mileage = NA
+df[df$tax>extreme_out_tax & df$outliers == 1,]$tax = NA
+# df[df$tax<extreme_out_tax_und & df$outliers == 1 & !is.na(df$tax),]$tax = NA
+df[df$mpg>extreme_out_mpg & df$outliers == 1,]$mpg = NA
+df[df$age>extreme_out_age & df$outliers == 1,]$age = NA
+```
+
+## Explanatory Variables - Categorical
+
+### MODEL
+
+First we drop the empty levels from the models:
+```{r}
+df$model = droplevels(df$model) #Some of them are not present anymore
+```
+
+We can see that there are a lot of different models:
+```{r}
+summary(df$model)
+```
+
+We can collapse them into less levels by creating a new level named "Other" and storing there the less frequent ones:
+```{r}
+model_freq = df %>%
+  group_by(manufacturer, model) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+quantile(model_freq$n, probs = seq(0,1,0.1)) # Per sota del 50% quartil potser?
+median = quantile(model_freq$n, probs = seq(0,1,0.1))[[6]]
+
+model_freq = model_freq %>% 
+  filter(., n < median) %>%
+  droplevels()
+
+df = df %>%
+  mutate(model_collapsed = as.character(model)) %>%
+  mutate(model_collapsed = case_when(model_collapsed %in% levels(model_freq$model) ~ "Other",
+                           TRUE ~ model_collapsed)) %>%
+  mutate(model_collapsed = as.factor(model_collapsed))
+
+table(df$model_collapsed)
+```
+
+Another option:
+```{r}
+# CODI BASURA PER TREURE ELS MODELS QUE TENEN MENYS DE TRESHOLD COTXES. SEGUR QUE TU HO POTS POSAR EN UNA LINEA xdddddd (Potser millor no eliminar el fact, sinó fer-ne un de nou?)
+# '''
+# treshold = 10
+# counts = data.frame(summary(df$model))
+# counts$names = rownames(counts)
+# 
+# remove_levels = counts[counts$summary.df.model.<treshold,2]
+# 
+# levels(df$model) <- c(levels(df$model), 'Other')
+# 
+# for (i in 1:length(remove_levels)){
+#   print(remove_levels[i])
+#   df[df$model == remove_levels[i],]$model = 'Other'
+#   
+# }
+# 
+# df$model = droplevels(df$model)
+# '''
+```
+
+### TRANSMISSION
+
+```{r}
+# We will plot the categorical variables together
+plist = list()
+```
+
+
+```{r}
+p = df %>%
+  group_by(transmission) %>%
+  summarise(n = n(), price = mean(price)) %>%
+  drop_na() %>%
+  mutate(price = price/max(price)) %>%
+  ggplot(data=., aes(x=reorder(transmission, -n), y=n, fill=transmission)) +
+    scale_fill_brewer(palette = "Blues") +
+    geom_bar(stat="identity", aes(width=price)) +
+    geom_text(aes(label=n), vjust=-0.2, size=2.9) +
+    labs(x="Transmission",
+         y="Count",
+         fill="Type") +
+  theme(legend.position="none")
+
+plist[[1]] = p
+ggsave(file=file.path(plot_path,"bar_transmission.png"), plot=p)
+```
+
+### FUEL TYPE
+
+We can see that we only have one electric vehicle. Also we have the category other which we have to adress because, as of winter 2021, the four manufacturers do not produce cars with other engines (ie. Hidorgen or Biodegradable fuel):
+```{r}
+p = df %>%
+  group_by(fuelType) %>%
+  summarise(n = n(), price = mean(price)) %>%
+  drop_na() %>%
+  mutate(price = price/max(price)) %>%
+  ggplot(data=., aes(x=reorder(fuelType, -n), y=n, fill=fuelType)) +
+    scale_fill_brewer(palette = "Blues") +
+    geom_bar(stat="identity", aes(width=price)) +
+    geom_text(aes(label=n), vjust=-0.2, size=2.9) +
+    labs(x="Fuel Type",
+         y="Count",
+         fill="Type") +
+  theme(legend.position="none")
+
+plist[[2]] = p
+ggsave(file=file.path(plot_path,"bar_fueltype.png"), plot=p)
+```
+
+Drop electric vehicle and convert to NA the Other levels:
+```{r}
+df[df$fuelType=='Other',]$fuelType = NA
+df = df[!df$fuelType=='Electric',]
+df$fuelType = droplevels(df$fuelType)
+```
+
+### ENGINE SIZE
+
+```{r}
+p = df %>%
+  group_by(engineSize) %>%
+  summarise(n = n(), price = mean(price)) %>%
+  drop_na() %>%
+  mutate(price = price/max(price)) %>%
+  ggplot(data=., aes(x=reorder(engineSize, n), y=n, fill=engineSize)) +
+    geom_bar(stat="identity", aes(width=price)) +
+    geom_text(aes(label=n), hjust=-0.2) +
+    coord_flip() +
+    labs(title="Engine Size Count",
+         x="Engine Size",
+         y="Count",
+         fill="Size",
+         caption="Bar width is relative to price by attribute") +
+  scale_y_continuous(limits = c(0, 2150))
+
+ggsave(file=file.path(plot_path,"bar_enginesize.png"), plot=p)
+p
+```
+
+Discretize into intervals:
+```{r}
+# Code to reduce in 5 breaks (He provat amb diferents llibreries i Hmisc::cut2 és la que retorna el resultat més coherent)
+groups=5
+
+df$engineSize_int = discretize(as.numeric(as.character(df$engineSize)), method = "interval",breaks = groups)
+table(df$engineSize_int)
+
+df$engineSize_int = as.ordered(cut2(as.numeric(as.character(df$engineSize)), g=groups+1, m=nrow(df)/groups))
+table(df$engineSize_int)
+```
+
+Now we have:
+```{r}
+p = df %>%
+  group_by(engineSize_int) %>%
+  summarise(n = n(), price = mean(price)) %>%
+  drop_na() %>%
+  mutate(price = price/max(price)) %>%
+  ggplot(data=., aes(x=reorder(engineSize_int, -n), y=n, fill=engineSize_int)) +
+    scale_fill_brewer(palette = "Blues") +
+    geom_bar(stat="identity", aes(width=price)) +
+    geom_text(aes(label=n), vjust=-0.2, size=2.9) +
+    labs(x="Engine Size Interval",
+         y="Count",
+         fill="Size") +
+  theme(legend.position="none")
+
+plist[[3]] = p
+ggsave(file=file.path(plot_path,"bar_enginesize_int.png"), plot=p)
+```
+
+### MANUFACTURER
+
+```{r}
+p = df %>%
+  group_by(manufacturer) %>%
+  summarise(n = n(), price = mean(price)) %>%
+  drop_na() %>%
+  mutate(price = price/max(price)) %>%
+  ggplot(data=., aes(x=reorder(manufacturer, -n), y=n, fill=manufacturer)) +
+    scale_fill_brewer(palette = "Blues") +
+    geom_bar(stat="identity", aes(width=price)) +
+    geom_text(aes(label=n), vjust=-0.2, size=2.9) +
+    labs(x="Manufacturer",
+         y="Count",
+         fill="Type") +
+  theme(legend.position="none")
+
+plist[[4]] = p
+ggsave(file=file.path(plot_path,"bar_enginesize_int.png"), plot=p)
+```
+All the plots:
+```{r}
+title = ggdraw() + draw_label("Barplots - Categorical Variables", fontface='bold')
+plist[[5]] = ggdraw()
+plist[[6]] = ggdraw() + draw_label("*Bar width is relative to the price", fontface="italic", size=10)
+p = plot_grid(title, NULL,
+              plotlist = plist,
+              ncol = 2, rel_heights = c(0.2,1,1,0.1))
+ggsave(file=file.path(plot_path,"bar_cat.png"), plot=p)
+p
+```
+
+# Imputation
+
+We do not need the outliers feature for that:
+```{r}
+aux_outliers = df
+df = df %>% select(., -c("outliers", "engineSize"))
+```
+
+```{r}
+df_miss = aggr(df, col=mdc(1:5), numbers=TRUE, sortVars=TRUE, labels=names(df), cex.axis=.5, gap=1, ylab=c("Proportion missing values","Missing values pattern"))
+```
+
+## PCA IMPUTATION
+
+```{r}
+res.pca<-imputePCA(df[, sapply(df, is.numeric)])
+df1 = as.data.frame(res.pca$completeObs)
+df2 = df[, sapply(df, is.numeric)]
+summary(res.pca$completeObs) #To see if there are any 'impossible' results (ie. negative age)
+summary(df[, sapply(df, is.numeric)]) #Check if the distributions are similar
+```
+
+All the columns follow the same distribution as we fail to reject the null hypothesis. Imputation is valid.
+```{r warning=F}
+names = colnames(df1)
+for (i in 1:(length(df1))) {
+  kstest = ks.test(df1[,i], df2[,i])
+  print(paste(names[i],"- p-value:", kstest$p.value))
+}
+```
+
+## MCA IMPUTATION
+
+It is not even necessary to check if the distribution is the same since the number of NA is so low.
+```{r}
+res.mca<-imputeMCA(df[, !sapply(df, is.numeric)])
+prop.table(table(df$fuelType))
+prop.table(table(res.mca$completeObs$fuelType))
+
+df = data.frame(res.pca$completeObs,res.mca$completeObs)
+```
+
+```{r}
+nrow(df)
+aux = df
+```
+
+```{r}
+df = aux
+```
+
+# MULTIVARIATE OUTLIERS
+
+```{r}
+res.out<-Moutlier(df[, sapply(df, is.numeric)],quantile=0.99)  #Tenim més de 200 outliers!
+# str(res.out)
+# res.out
+# quantile(res.out$md,seq(0,1,0.025))
+which(res.out$md > res.out$cutoff)
+plot( res.out$md, res.out$rd )
+abline(h=res.out$cutoff, col="red")
+abline(v=res.out$cutoff, col="red")
+#
+```
+```{r}
+p = ggplot(data=as.data.frame(res.out), aes(x=md, y=rd)) +
+  geom_point(shape=1) +
+  geom_hline(yintercept = res.out$cutoff, color="red") +
+  geom_vline(xintercept = res.out$cutoff, color="red") +
+  # First Rectangle
+  annotate("rect", fill = "blue", alpha = 0.15, 
+        xmin = -Inf, xmax = res.out$cutoff,
+        ymin = -Inf, ymax = Inf) +
+  # Second Rectangle
+  annotate("rect", fill = "blue", alpha = 0.15, 
+        xmin = -Inf, xmax = Inf,
+        ymin = -Inf, ymax = res.out$cutoff) +
+  # Third Rectangle
+  annotate("rect", fill = "red", alpha = 0.15, 
+        xmin = res.out$cutoff, xmax = Inf,
+        ymin = res.out$cutoff, ymax = Inf) +
+  # Labs
+  labs(title="Multivariate Outliers - Mahalanobis",
+         x="Classical Distance",
+         y="Robust Distance")
+
+ggsave(file=file.path(plot_path,"mahalanobis.png"), plot=p)
+p
+```
+
+```{r}
+aux_out = df
+df = aux_out[which(res.out$rd <= res.out$cutoff | res.out$md <= res.out$cutoff ),] #Remove the MV outliers, keep the ids
+df_out = aux_out[which(res.out$rd > res.out$cutoff & res.out$md > res.out$cutoff ),]
+nrow(df)
+nrow(df_out)
+```
+
+```{r}
+aux_outliers = aux_outliers %>% 
+  filter(., outliers>1) %>%
+  group_by(manufacturer, model, mileage, price) %>%
+  summarise(n = n())
+```
+We can now check if the rows with multiple univariant outliers have been detected:
+```{r}
+inner_join(df, aux_outliers, by=(c("manufacturer", "model", "mileage", "price"))) # Tots els outliers s s'han tret.
+```
+
+Write clean dataset:
+```{r}
+# write.csv(df, file.path(data_path, "cars.csv"), row.names = FALSE)
+```
