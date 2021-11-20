@@ -2,7 +2,7 @@
 
 Download the last [report](https://github.com/eReverter/predicting_car_price_lm/blob/main/reports/SIM_Assignment_1.pdf) and open it to vizualize its contents.
 
-This is a project for the master in data science (MDS) taught at FIB, UPC. The aim of it is to predict for how much you should sell your old car. The data used for this prediction can be obtained through [kaggle](https://www.kaggle.com/adityadesai13/used-car-dataset-ford-and-mercedes). 
+This is a project for the master in data science (MDS) taught at FIB, UPC. The aim of it is to predict for how much you should sell your old car. The data used for this prediction can be obtained through [kaggle](https://www.kaggle.com/adityadesai13/used-car-dataset-ford-and-mercedes). It is also stored in the  data folder.
 
 ## Data
 
