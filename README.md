@@ -1,40 +1,148 @@
-# Predicting for how much should you sell your old car
+# Car Prices Data Exploration and Modeling
 
-Download the last [report](https://github.com/eReverter/predicting_car_price_lm/blob/main/reports/SIM_Assignment_1.pdf) and open it to vizualize its contents.
+This project aims to gain insights into the pricing of cars by exploring explanatory variables and creating models to predict the response variable. The analysis was performed on a dataset containing information on car prices. The following sections describe the techniques applied and results obtained for data preparation and exploration, including statistical inference and modeling techniques. Everything has been computed through **R**.
 
-This is a project for the master in data science (MDS) taught at FIB, UPC. The aim of it is to predict for how much you should sell your old car. The data used for this prediction can be obtained through [kaggle](https://www.kaggle.com/adityadesai13/used-car-dataset-ford-and-mercedes). It is also stored in the  data folder.
+The following is a brief summary of each section from the report. For more details, see the [pdf](reports/SIM_Assignment_1.pdf).
 
-## Data
+## TOC
 
-Only data from Audi, BMW, Mercedes and VW is going to be used. Also, only 5000 random samples from each subset are going to be kept. These are the requirements set by the university.
+- [Problem Statement](#problem-statement)
+- [Data Collection and Cleaning](#data-collection-and-cleaning)
+- [EDA](#eda)
+  * [Outlier Detection](#outlier-detection)
+  * [Response Variable: Price](#response-variable--price)
+  * [Quantitative Explanatory Variables](#quantitative-explanatory-variables)
+  * [Qualitative Explanatory Variables](#qualitative-explanatory-variables)
+  * [Imputation](#imputation)
+- [Modeling](#modeling)
+  * [Normality Test and Serial Correlation](#normality-test-and-serial-correlation)
+  * [Variable Correlation](#variable-correlation)
+  * [Polytomic Factor](#polytomic-factor)
+  * [ANOVA Model](#anova-model)
+  * [Interaction Effects](#interaction-effects)
+  * [Linear Regression Model with Age](#linear-regression-model-with-age)
+  * [Quadratic Term Model](#quadratic-term-model)
+  * [Exploratory Numeric Variables](#exploratory-numeric-variables)
+  * [Final Model](#final-model)
+  * [Logarithmic Model](#logarithmic-model)
+  * [Main Effects from Factors](#main-effects-from-factors)
+  * [Graphical Assessment of Best Model](#graphical-assessment-of-best-model)
+  * [Presence of Outliers in Studentized Residuals](#presence-of-outliers-in-studentized-residuals)
+  * [Presence of A Priori Influential Data Observations](#presence-of-a-priori-influential-data-observations)
+  * [Presence of A Posteriori Influential Values](#presence-of-a-posteriori-influential-values)
+  * [Expected Price with 95% Confidence Interval](#expected-price-with-95--confidence-interval)
+- [Conclusion](#conclusion)
 
-## Main To-Do
+## Problem Statement
 
-- [x] Get the data.
-- [x] Merge the data.
-- [x] Explore each variable.
-- [x] Check missing values.
-- [x] Impute missing values.
-- [x] Check for outliers.
+The project's goal is to gain insights on the price of cars using the exploratory variables and create models to explain or predict this response variable.
 
-## Questions
+## Data Collection and Cleaning
 
-- [x] 1. Determine if the response variable (price) has an acceptably normal distribution. Address test to discard serial correlation.
-- [x] 2. Indicate by exploration of the data which are apparently the variables most associated with the response variable (use only the indicated variables).
-- [x] 3. Define a polytomic factor f.age for the covariate car age according to its quartiles and argue if the average price depends on the level of age. Statistically justify the answer.
-- [x] 4. Calculate and interpret the anova model that explains car price according to the age factor and the fuel type.
-- [x] 5. Do you think that the variability of the price depends on both factors? Does the relation between price and age factor depend on fuel type?
-- [x] 6. Calculate the linear regression model that explains the price from the age: interpret the regression line and assess its quality.
-- [x] 7. What is the percentage of the price variability that is explained by the age of the car?
-- [x] 8. Do you think it is necessary to introduce a quadratic term in the equation that relates the price to its age?
-- [x] 9. Are there any additional explanatory numeric variables needed to the car price? Study collinearity effects.
-- [x] 10. After controlling by numerical variables, indicate whether the additive effect of the available factors on the price are statistically significant.
-- [x] 11. Select the best model available so far. Interpret the equations that relate the explanatory variables to the answer (rate).
-- [x] 12. Study the model that relates the logarithm of the price to the numerical variables.
-- [x] 13. Once explanatory numerical variables are included in the model, are there any main effects from factors needed?
-- [x] 14. Graphically assess the best model obtained so far.
-- [x] 15. Assess the presence of outliers in the studentized residuals at a 99% confidence level. Indicate what those observations are.
-- [x] 16. Study the presence of a priori influential data observations, indicating their number according to the criteria studied in class.
-- [x] 17. Study the presence of a posteriori influential values, indicating the criteria studied in class and the actual atypical observations.
-- [x] 18. Given a 5-year old car, the rest of numerical variables on the mean and factors on the reference level, what would be the expected price with a 95% confidence interval?
-- [x] 19. Summarize what you have learned by working with this interesting real dataset.
+The following steps were performed for data preparation and cleaning:
+
+1. The four homogeneous datasets are merged into a single one.
+2. Structural errors are fixed: categorical values are mutated into factors, and extra blanks are removed in Model.
+3. Duplicated observations are removed.
+4. A random sample of 5000 observations is selected.
+5. Year variable is transformed into Age.
+6. Wrongly classified cars are labeled as electric according to their engine size.
+7. Missing values are explored. 0 NA’s are found.
+
+## EDA
+
+The following exploratory data analysis was performed:
+
+### Outlier Detection
+
+Outlier detection was first performed with a univariate exploration and then with a multivariate one. A new attribute, Outliers, was created in the dataset to keep track of the number of univariate outliers each individual has. Observations which only have one univariate outlier (based on *IQR*) are imputed with NA while the ones with more are kept so the multivariate outliers do not become biased. All the individuals with more than one univariate outlier have been detected with the *Mahalanobis* distance, and thus, have been removed from the main analysis.
+
+### Response Variable: Price
+
+46 outlying observations (0,9%) were completely removed, as they can highly influence our models and analyses.
+
+### Quantitative Explanatory Variables
+
+It has been observed that all variables have extreme outliers and that tax is the only one which has outliers in both tails.
+
+### Qualitative Explanatory Variables
+
+Regarding qualitative variables, both `transmissionType` and `manufacturer` have not displayed any interesting remarks, having 3 and 4 distinct categories respectively and no significant count differences. The remaining three variables, however, have been assessed differently.
+
+### Imputation
+
+After finding all the outliers, the imputation of the missing values is the step which follows. First of all, quantitative variables are managed: *PCA* imputation is applied; then, it is checked whether the imputed values are incoherent (e.g., nega`fuel type`tive `age`) or not, and tested if the distribution of the values is preserved, which it is. After that, categorical variables are dealt with. *MCA* imputation is applied; similarly, it is checked if the proportions of the variables remain the same after the imputation process.
+
+## Modeling
+
+The following topics were addressed during the modeling phase:
+
+### Normality Test and Serial Correlation
+
+The normality of the response variable price was assessed using a *Shapiro-Wilk* test and visualizations, which revealed that the response variable does not follow a normal distribution. The *Durbin-Watson* test was used to detect serial correlation in the response variable, which was found to be present.
+
+### Variable Correlation
+
+Quantitative and qualitative variables were examined for their association with the response variable (price). *Spearman* correlation was used for non-normal data, and a *Kruskal* test was used for categorical data. It was found that `mileage`, `mpg`, and `age` had a negative correlation with `price`, while `tax` had a positive correlation. Qualitative variables (`transmission`, `fuelType`, and `enginezise_int`) were also found to be significantly associated with `price`.
+
+### Polytomic Factor
+
+The `age` variable was discretized into quartiles to create a new factor, `f.age`. The downward trend of the price with increasing age was confirmed through visualizations, a *Kruskal* test, and a pairwise *Wilcox* test.
+
+### ANOVA Model
+
+An *ANOVA* model was used to explain car `price` according to the `age` factor and `fuel type`. The `age` factor was found to have a more significant effect than `fuel type`. The coefficients of the resulting model showed that older cars have a lower predicted price, and hybrid cars have a higher price than diesel or petrol cars.
+
+### Interaction Effects
+
+The *ANOVA* model was extended to include the interaction between the `age` factor and `fuel type`. It was found that the relation between `price` and `age` was affected by `fuel type`, and the adjusted R-squared barely increased with this extension. The interaction plot revealed that while the price of all `fuel type`s decreases with the `age` of the car, the `price` is also influenced by `fuel type`. Specifically, petrol cars were always the cheapest, and the `price` trend reversed for old hybrid and diesel cars.
+
+### Linear Regression Model with Age
+
+The linear regression model between `price` and `age` showed a high intercept and a negative slope, with an R2 of 0.39. However, the model had a high deviation from normal distribution and had problems with granularity.
+
+### Quadratic Term Model
+
+The addition of a quadratic term to the linear regression model showed a slight improvement in residuals, but the model was not statistically significant.
+
+### Exploratory Numeric Variables
+
+Adding additional numeric variables showed that the `mileage` variable was not significant, and the `mpg` variable required a transformation. After transformations, `age` and `mpg` were the variables that contributed the most to the model.
+
+### Final Model
+
+The best model included `age`, `mpg`, `manufacturer`, `engine size`, `transmission`, and `fuel type`, with an R2 of 0.80. The residual plots showed some deviations from linearity and normality, but the model was suitable for modeling the price.
+
+### Logarithmic Model
+
+The logarithmic model with a transformation on the response variable showed improvements in residuals and a statistically significant result for the `tax` variable. After transformations, `mpg` and `age` required an additional transformation.
+
+Overall, the final model with `age`, `mpg`, `manufacturer`, `engine size`, `transmission`, and `fuel type` was the best perfirming one, with an R2 of 0.80.
+
+### Main Effects from Factors
+
+Using the step function, it was found that all additional factors are worth keeping, and collinearity effects were not observed. With the addition of factors, R2 increases to 0.86.
+
+### Graphical Assessment of Best Model
+
+The residuals and standardized residuals do not show a pattern, indicating that the linear and homoscedastic assumptions hold. However, normality problems were observed in the left tail, and a small group of observations can be influential. The marginal plots display that the model fits the points well in comparison to a smoother.
+
+### Presence of Outliers in Studentized Residuals
+
+69 outliers were found using both inferential and descriptive methods. The car model "Up" manufactured by VW is overrepresented in the outliers, accounting for over 30% of them. The other outliers are manual cars fueled by petrol with a lower price.
+
+### Presence of A Priori Influential Data Observations
+
+77 values with significantly high leverage were obtained, and they were all hybrid cars that were newer, not manual, more expensive, and with a small engine size.
+
+### Presence of A Posteriori Influential Values
+
+247 values were obtained using *Cook*'s distance, and none of the observations had a distance greater than 0.5 when considering the sample as large enough and discarding the *Chatterjee and Hadi* cut-off.
+
+### Expected Price with 95% Confidence Interval
+
+The predicted `price` for a 5-year-old car with the rest of numerical variables on the mean and factors on the reference level was 13844.91£, with a confidence interval of (10017.85£, 19133.99£). Although the prediction output is coherent, the interval range is quite broad.
+
+## Conclusion
+
+This project successfully modeled car prices using various variables, ensuring a quality dataset. The final model explained 86% of the variance in car prices, indicating that older cars tend to have lower prices and hybrid cars have higher prices than diesel or petrol cars. Outliers and missing values were managed, and the model was deemed suitable for car pricing despite some deviations from linearity and normality. This project demonstrates the effectiveness of using statistical techniques to analyze complex datasets.
