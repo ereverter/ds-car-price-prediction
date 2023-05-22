@@ -1,6 +1,6 @@
 # Car Prices Data Exploration and Modeling
 
-This project aims to gain insights into the pricing of cars by exploring explanatory variables and creating models to predict the response variable. The analysis was performed on a dataset containing information on car prices. The following sections describe the techniques applied and results obtained for data preparation and exploration, including statistical inference and modeling techniques. Everything has been computed through **R**.
+This project aims to gain insights into the pricing of cars by exploring explanatory variables and creating models to predict the response variable. The analysis was performed on a dataset containing information on car prices. The following sections describe the techniques applied and results obtained for data preparation and exploration, including statistical inference and modeling techniques. Everything has been computed through **R**. Work with [@gerardponsrecasens](https://github.com/gerardponsrecasens).
 
 The following is a brief summary of each section from the report. For more details, see the [pdf](reports/SIM_Assignment_1.pdf).
 
